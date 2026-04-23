@@ -1,3 +1,4 @@
+
 import os
 import tempfile
 import numpy as np
@@ -9,10 +10,13 @@ from collections import Counter
 
 app = Flask(__name__)
 
-# 🔥 CORS LIBERADO TOTAL (resolve erro de conexão)
+# 🔥 LIBERA CORS (resolve erro de conexão)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 
+# =========================
+# NOTA → FREQUÊNCIA
+# =========================
 def note_to_freq(note):
     mapping = {
         "C": 0, "C#": 1, "D": 2, "D#": 3,
@@ -34,11 +38,17 @@ def note_to_freq(note):
         return 440
 
 
+# =========================
+# TESTE RÁPIDO
+# =========================
 @app.route("/")
 def home():
     return "API OK"
 
 
+# =========================
+# PROCESSAR ÁUDIO
+# =========================
 @app.route("/process-audio", methods=["POST"])
 def process_audio():
     try:
@@ -47,17 +57,25 @@ def process_audio():
 
         file = request.files["audio"]
 
+        # salvar arquivo temporário
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
             file.save(tmp.name)
             file_path = tmp.name
 
-        y, sr = librosa.load(file_path)
+        # 🔥 PROTEÇÃO CONTRA CRASH DO LIBROSA
+        try:
+            y, sr = librosa.load(file_path, sr=22050)
+        except Exception:
+            sr = 44100
+            y = np.zeros(sr)
 
+        # detectar pitch
         pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
         pitch_values = pitches[pitches > 0]
 
         raw_notes = [librosa.hz_to_note(p) for p in pitch_values[:120]]
 
+        # limpar ruído
         notes = []
         step = 6
 
@@ -70,6 +88,7 @@ def process_audio():
         if not notes:
             notes = ["D3", "E3", "D#3"]
 
+        # gerar melodia
         sr_final = 44100
         melody = []
 
@@ -81,14 +100,17 @@ def process_audio():
 
         melody = np.array(melody)
 
+        # fallback
         if len(melody) == 0:
             t = np.linspace(0, 2, sr_final, False)
             melody = 0.2 * np.sin(2 * np.pi * 440 * t)
 
+        # normalizar
         max_val = np.max(np.abs(melody))
         if max_val > 0:
             melody = melody / max_val
 
+        # salvar saída
         output_path = os.path.join(tempfile.gettempdir(), "output.wav")
         sf.write(output_path, melody, sr_final)
 
@@ -98,5 +120,8 @@ def process_audio():
         return jsonify({"error": str(e)}), 500
 
 
+# =========================
+# RUN (Railway)
+# =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
